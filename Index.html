@@ -1496,12 +1496,25 @@
         let productItemsList = [];
         let plotNumbersList = [];
         let webAppUrl = ''; 
-        let currentDetailsData = null;
-        let config = {};
-        let sheetDepartments = {};
-        let sheetRequestTypes = {};
+        let currentDetailsData = null; 
 
+        const ADMIN_PIN = '147258';
         const MAX_FILES = 5;
+
+        const REQUEST_TYPES_CONFIG = {
+            'งานบริการลูกค้า': {
+                icon: 'fa-solid fa-truck',
+                types: ["งานติดตั้ง", "SET ระบบ", "เข้าแก้ไข/เข้าตรวจสอบ", "ส่ง-รับสินค้า"],
+            },
+            'งานภายใน/ภายนอก': {
+                icon: 'fa-solid fa-users',
+                types: ["ยืมกำลังพล"],
+            },
+            'อื่นๆ': {
+                icon: 'fa-solid fa-ellipsis',
+                types: ["อื่นๆ"],
+            }
+        };
 
         const STATUS_COLORS = {
             'รอดำเนินการ': {
@@ -1534,6 +1547,19 @@
                 hex: '#e2e8f0',
                 eventClass: 'fc-event-pending'
             }
+        };
+        const DEPARTMENTS = {
+            "ขายและการตลาด": ["ขาย", "การตลาด", "สนับสนุนบริการด้านเทคนิค"],
+            "พัฒนาธุรกิจ": [],
+            "การค้าระหว่างประเทศ ": [],
+            "ธุรกิจใหม่": [],
+            "ซัพพลายเชน": ["คลังสินค้า", "โลจิสติก"],
+            "ผลิตและบริการ": ["ผลิต", "บริการลูกค้า"],
+            "ทรัพยากรมนุษย์": [],
+            "จัดซื้อ": [],
+            "บัญชีและการเงิน": ["บัญชี", "บัญชีต้นทุนและทรัพย์สิน", "การเงิน"],
+            "เทคโนโลยีสารสนเทศ": [],
+            "สานักเลขานุการบริษัท": ["เลขานุการบริษัท", "บริหารจัดการและเลขานุการผู้บริหาร"]
         };
         const THAI_MONTHS = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
         const THAI_DAYS_SHORT = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"];
@@ -1617,9 +1643,8 @@
         const setupModal = (modalNode, submitHandler) => {
             const form = modalNode.querySelector('.request-form');
 
-            // Populate from sheet data after it's loaded
-            // populateRequestTypes(form);
-            // populateDropdowns(form);
+            populateRequestTypes(form);
+            populateDropdowns(form);
 
             modalNode.querySelectorAll('.close-btn').forEach(btn => {
                 btn.addEventListener('click', () => hideModal(modalNode));
@@ -1818,19 +1843,9 @@
                         allData = response.data.repairData || [];
                         sheetHolidays = response.data.holidayData || [];
                         employeeList = response.data.employeeData || []; 
-                        webAppUrl = response.data.webAppUrl || '';
-                        config = response.data.configData || {};
-                        sheetDepartments = response.data.departmentData || {};
-                        sheetRequestTypes = response.data.requestTypesData || {};
-
+                        webAppUrl = response.data.webAppUrl || ''; 
                         holidayDateStrings = new Set(sheetHolidays.map(h => h.date));
                         isDataLoaded = true;
-
-                        // Populate dynamic data into UI elements
-                        document.querySelectorAll('.request-form').forEach(form => {
-                            populateRequestTypes(form);
-                            populateDropdowns(form);
-                        });
                         populateOperatorDropdown();
                         document.querySelectorAll('select[name="modalOperatorSelect"], #assign-operator-select').forEach(select => {
                             select.innerHTML = '<option value="">-- เลือกรายชื่อ --</option>';
@@ -1999,8 +2014,8 @@
             const container = form.querySelector('.request-type-group');
             container.innerHTML = ''; 
 
-            Object.keys(sheetRequestTypes).forEach(category => {
-                const config = sheetRequestTypes[category];
+            Object.keys(REQUEST_TYPES_CONFIG).forEach(category => {
+                const config = REQUEST_TYPES_CONFIG[category];
                 let categoryHtml = `
                     <div>
                         <h4 class="text-base font-semibold text-slate-600 mb-3 border-b pb-2"><i class="${config.icon} mr-2 text-cyan-600"></i>${category}</h4>
@@ -2030,13 +2045,13 @@
             const divContainer = divSelect.parentElement;
 
             deptSelect.innerHTML = '<option value="">-- เลือกฝ่าย --</option>';
-            for (const dept in sheetDepartments) {
+            for (const dept in DEPARTMENTS) {
                 deptSelect.innerHTML += `<option value="${dept}">${dept}</option>`;
             }
 
             deptSelect.addEventListener('change', () => {
                 const selectedDept = deptSelect.value;
-                const divisions = sheetDepartments[selectedDept] || [];
+                const divisions = DEPARTMENTS[selectedDept] || [];
 
                 if (divisions.length > 0) {
                     divContainer.style.display = 'block';
@@ -3327,8 +3342,7 @@
 
             form.addEventListener('submit', (e) => {
                 e.preventDefault();
-                const adminPin = config.AdminPIN || '123456'; // Fallback PIN
-                if (pinInput.value === adminPin) {
+                if (pinInput.value === ADMIN_PIN) {
                     hideModal(modal);
                     if (jobForPinAction && actionAfterPin === 'action') {
                         showActionModal(jobForPinAction);
