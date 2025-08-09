@@ -9,6 +9,12 @@ const SHEET_NAME = 'InstallationPlan';
 const HOLIDAY_SHEET_NAME = 'Holidays';
 // --- ชื่อชีตสำหรับเก็บข้อมูลพนักงาน ---
 const EMPLOYEE_SHEET_NAME = 'Employees';
+// --- ชื่อชีตสำหรับเก็บข้อมูลฝ่ายและแผนก ---
+const DEPARTMENT_SHEET_NAME = 'Departments';
+// --- ชื่อชีตสำหรับเก็บข้อมูลประเภทการแจ้งงาน ---
+const REQUEST_TYPES_SHEET_NAME = 'RequestTypes';
+// --- ชื่อชีตสำหรับเก็บข้อมูลการตั้งค่า (เช่น รหัส Admin) ---
+const CONFIG_SHEET_NAME = 'Config';
 // --- ID ของโฟลเดอร์หลักใน Google Drive สำหรับเก็บรูปภาพ ---
 const FOLDER_ID = '1mLFLR0Jq9Cwu1nUfXa35XsTVytxuDqDR';
 
@@ -37,7 +43,7 @@ function doGet(e) {
 
 /**
  * ดึงข้อมูลเริ่มต้นทั้งหมดที่จำเป็นสำหรับแอปพลิเคชัน
- * @returns {object} - อ็อบเจ็กต์ที่ประกอบด้วยสถานะและข้อมูล (ใบงาน, วันหยุด, พนักงาน, URL ของเว็บแอป)
+ * @returns {object} - อ็อบเจ็กต์ที่ประกอบด้วยสถานะและข้อมูล
  */
 function getInitialData() {
     try {
@@ -50,6 +56,15 @@ function getInitialData() {
         const employeeDataResult = getEmployeeData();
         if (employeeDataResult.status === 'error') Logger.log(`Warning: Could not retrieve employee data. ${employeeDataResult.message}`);
 
+        const departmentDataResult = getDepartmentData();
+        if (departmentDataResult.status === 'error') Logger.log(`Warning: Could not retrieve department data. ${departmentDataResult.message}`);
+
+        const requestTypesDataResult = getRequestTypesData();
+        if (requestTypesDataResult.status === 'error') Logger.log(`Warning: Could not retrieve request types data. ${requestTypesDataResult.message}`);
+
+        const configDataResult = getConfigData();
+        if (configDataResult.status === 'error') Logger.log(`Warning: Could not retrieve config data. ${configDataResult.message}`);
+
         const webAppUrl = ScriptApp.getService().getUrl();
 
         return {
@@ -58,6 +73,9 @@ function getInitialData() {
                 repairData: repairDataResult.data || [],
                 holidayData: holidayDataResult.data || [],
                 employeeData: employeeDataResult.data || [],
+                departmentData: departmentDataResult.data || {},
+                requestTypesData: requestTypesDataResult.data || {},
+                configData: configDataResult.data || {},
                 webAppUrl: webAppUrl
             }
         };
@@ -184,6 +202,135 @@ function getEmployeeData() {
         };
     }
 }
+
+/**
+ * ดึงข้อมูลฝ่ายและแผนกจาก Google Sheet
+ * @returns {object} - อ็อบเจ็กต์พร้อมข้อมูลฝ่ายและแผนก
+ */
+function getDepartmentData() {
+    try {
+        const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(DEPARTMENT_SHEET_NAME);
+        if (!sheet || sheet.getLastRow() < 2) {
+            Logger.log(`Sheet "${DEPARTMENT_SHEET_NAME}" is empty or not found.`);
+            return {
+                status: 'success',
+                data: {}
+            };
+        }
+        // คอลัมน์ A: ฝ่าย, คอลัมน์ B: แผนก
+        const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+        const departments = values.reduce((acc, row) => {
+            const dept = row[0] ? row[0].trim() : '';
+            const division = row[1] ? row[1].trim() : '';
+            if (dept) {
+                if (!acc[dept]) {
+                    acc[dept] = [];
+                }
+                if (division) {
+                    acc[dept].push(division);
+                }
+            }
+            return acc;
+        }, {});
+        return {
+            status: 'success',
+            data: departments
+        };
+    } catch (error) {
+        Logger.log('ERROR in getDepartmentData: ' + error.stack);
+        return {
+            status: 'error',
+            message: `Failed to get department data: ${error.message}`,
+            data: {}
+        };
+    }
+}
+
+/**
+ * ดึงข้อมูลประเภทการแจ้งงานจาก Google Sheet
+ * @returns {object} - อ็อบเจ็กต์พร้อมข้อมูลประเภทการแจ้งงาน
+ */
+function getRequestTypesData() {
+    try {
+        const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(REQUEST_TYPES_SHEET_NAME);
+        if (!sheet || sheet.getLastRow() < 2) {
+            Logger.log(`Sheet "${REQUEST_TYPES_SHEET_NAME}" is empty or not found.`);
+            return {
+                status: 'success',
+                data: {}
+            };
+        }
+        // คอลัมน์ A: Category, B: Icon, C: Type
+        const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
+        const requestTypes = values.reduce((acc, row) => {
+            const category = row[0] ? row[0].trim() : '';
+            const icon = row[1] ? row[1].trim() : 'fa-solid fa-ellipsis';
+            const type = row[2] ? row[2].trim() : '';
+
+            if (category && type) {
+                if (!acc[category]) {
+                    acc[category] = {
+                        icon: icon,
+                        types: []
+                    };
+                }
+                acc[category].types.push(type);
+            }
+            return acc;
+        }, {});
+        return {
+            status: 'success',
+            data: requestTypes
+        };
+    } catch (error) {
+        Logger.log('ERROR in getRequestTypesData: ' + error.stack);
+        return {
+            status: 'error',
+            message: `Failed to get request types data: ${error.message}`,
+            data: {}
+        };
+    }
+}
+
+/**
+ * ดึงข้อมูลการตั้งค่าจาก Google Sheet
+ * @returns {object} - อ็อบเจ็กต์พร้อมข้อมูลการตั้งค่า
+ */
+function getConfigData() {
+    try {
+        const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(CONFIG_SHEET_NAME);
+        if (!sheet || sheet.getLastRow() < 2) {
+            Logger.log(`Warning: "${CONFIG_SHEET_NAME}" sheet not found or empty.`);
+            return {
+                status: 'success',
+                data: {}
+            };
+        }
+        // คอลัมน์ A: Key, คอลัมน์ B: Value
+        const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+        const config = values.reduce((acc, row) => {
+            const key = row[0] ? row[0].trim() : '';
+            // *** FIX: Convert value to string before trimming to avoid errors with numbers ***
+            const value = row[1] ? String(row[1]).trim() : '';
+            if (key) {
+                acc[key] = value;
+            }
+            return acc;
+        }, {});
+        return {
+            status: 'success',
+            data: config
+        };
+    } catch (error) {
+        Logger.log('ERROR in getConfigData: ' + error.stack);
+        return {
+            status: 'error',
+            message: `Failed to get config data: ${error.message}`,
+            data: {}
+        };
+    }
+}
+
 
 /**
  * ดึงรายละเอียดของใบงานเฉพาะตามเลขที่ใบสั่งงาน
@@ -770,5 +917,5 @@ function generateDocNumber(sheet, timestamp, prefixCode) {
  */
 function getOrCreateFolder(parentFolder, folderName) {
     const folders = parentFolder.getFoldersByName(folderName);
-    return folders.hasNext() ? folders.next() : parentFolder.createFolder(folderName)
+    return folders.hasNext() ? folders.next() : parentFolder.createFolder(folderName);
 }
