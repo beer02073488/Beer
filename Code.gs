@@ -9,7 +9,7 @@ const SHEET_NAME = 'InstallationPlan';
 const HOLIDAY_SHEET_NAME = 'Holidays';
 // --- ชื่อชีตสำหรับเก็บข้อมูลพนักงาน ---
 const EMPLOYEE_SHEET_NAME = 'Employees';
-// --- ID ของโฟลเดอร์หลักใน Google Drive สำหรับเก็บรูปภาพ ---
+// --- ID ของโฟลเดอร์หลักใน Google Drive สำหรับเก็บรูปภาพและไฟล์แนบ ---
 const FOLDER_ID = '1mLFLR0Jq9Cwu1nUfXa35XsTVytxuDqDR';
 
 
@@ -259,7 +259,7 @@ function addNewRepairJob(data) {
         const jobFolder = getOrCreateFolder(DriveApp.getFolderById(FOLDER_ID), docNumber);
 
         const jobPhotoIds = (data.jobPhotos || []).map((photoB64, index) => {
-            return saveImageAndGetId(photoB64, `job_${docNumber}_${index + 1}.png`, jobFolder);
+            return saveFileAndGetId(photoB64, `job_${docNumber}_${index + 1}.png`, jobFolder);
         }).filter(id => id).join(',');
 
         const newRowData = {
@@ -281,8 +281,8 @@ function addNewRepairJob(data) {
             'รูปภาพหน้างาน': jobPhotoIds,
             'รายละเอียดงาน': data.jobDetails || '',
             'สถานะ': (data.operatorNames && data.operatorNames.length > 0) ? "กำลังดำเนินการ" : "รอดำเนินการ",
-            'ผู้ดำเนินการ': (data.operatorNames || []).join(', ')
-
+            'ผู้ดำเนินการ': (data.operatorNames || []).join(', '),
+            'ไฟล์แนบ': '[]' // <-- ADDED: Initialize attachments column
         };
 
         sheet.appendRow(headers.map(header => newRowData[header] !== undefined ? newRowData[header] : ''));
@@ -347,7 +347,7 @@ function updateRepairJob(data) {
         });
 
         const newPhotoIds = (photoData.new || []).map((photoB64, index) => {
-            return saveImageAndGetId(photoB64, `job_${docNumber}_update_${Date.now()}_${index + 1}.png`, jobFolder);
+            return saveFileAndGetId(photoB64, `job_${docNumber}_update_${Date.now()}_${index + 1}.png`, jobFolder);
         }).filter(id => id);
         const finalPhotoIds = [...photosToKeep, ...newPhotoIds].join(',');
 
@@ -699,35 +699,107 @@ function deleteHistoryEntry(docNumber, historyIndex) {
     }
 }
 
+// =================================================================
+//                      FILE UPLOAD FUNCTIONS (NEW)
+// =================================================================
+
+/**
+ * อัปโหลดไฟล์และเชื่อมโยงกับใบงาน
+ * @param {object} fileData - ข้อมูลไฟล์ที่ประกอบด้วย docNumber, fileName, mimeType, base64Data
+ * @returns {object} - สถานะการอัปโหลดและข้อมูลไฟล์ที่บันทึก
+ */
+function uploadFileAndLinkToJob(fileData) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+    try {
+        const { docNumber, fileName, mimeType, base64Data } = fileData;
+        if (!docNumber || !fileName || !mimeType || !base64Data) {
+            return { status: 'error', message: 'ข้อมูลสำหรับอัปโหลดไฟล์ไม่ครบถ้วน' };
+        }
+
+        const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_NAME);
+        const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => h.trim());
+        
+        const docNumberColIndex = headers.indexOf('เลขที่ใบสั่งงาน');
+        if (docNumberColIndex === -1) throw new Error('ไม่พบคอลัมน์ "เลขที่ใบสั่งงาน"');
+
+        const attachmentsColName = 'ไฟล์แนบ';
+        let attachmentsColIndex = headers.indexOf(attachmentsColName);
+        if (attachmentsColIndex === -1) {
+            sheet.getRange(1, headers.length + 1).setValue(attachmentsColName);
+            attachmentsColIndex = headers.length;
+        }
+
+        const dataValues = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
+        const rowIndex = dataValues.findIndex(row => row[docNumberColIndex] == docNumber);
+        if (rowIndex === -1) throw new Error(`ไม่พบใบงานเลขที่ ${docNumber}`);
+
+        const jobFolder = getOrCreateFolder(DriveApp.getFolderById(FOLDER_ID), docNumber);
+        const savedFile = saveFileAndGetId(base64Data, fileName, jobFolder, mimeType);
+        if (!savedFile.id) throw new Error('ไม่สามารถบันทึกไฟล์ลงใน Drive ได้');
+
+        const rowToUpdate = rowIndex + 2;
+        const attachmentsCell = sheet.getRange(rowToUpdate, attachmentsColIndex + 1);
+        const currentAttachmentsJSON = attachmentsCell.getValue() || '[]';
+        let attachments = [];
+        try {
+            attachments = JSON.parse(currentAttachmentsJSON);
+            if (!Array.isArray(attachments)) attachments = [];
+        } catch (e) {
+            attachments = [];
+        }
+
+        const newAttachment = {
+            id: savedFile.id,
+            name: fileName,
+            type: mimeType,
+            size: savedFile.size,
+            uploadedAt: new Date().toISOString()
+        };
+
+        attachments.push(newAttachment);
+        attachmentsCell.setValue(JSON.stringify(attachments));
+
+        return { status: 'success', message: 'อัปโหลดไฟล์สำเร็จ', fileInfo: newAttachment };
+
+    } catch (e) {
+        Logger.log('ERROR in uploadFileAndLinkToJob: ' + e.stack);
+        return { status: 'error', message: `เกิดข้อผิดพลาดในการอัปโหลดไฟล์: ${e.message}` };
+    } finally {
+        lock.releaseLock();
+    }
+}
+
 
 // =================================================================
 //                      UTILITY FUNCTIONS
 // =================================================================
 
 /**
- * บันทึกรูปภาพ (Base64) ลงใน Google Drive และคืนค่า File ID
- * @param {string} base64 - ข้อมูลรูปภาพในรูปแบบ Base64
+ * บันทึกไฟล์ (Base64) ลงใน Google Drive และคืนค่า File ID และข้อมูลไฟล์
+ * @param {string} base64 - ข้อมูลไฟล์ในรูปแบบ Base64
  * @param {string} filename - ชื่อไฟล์ที่จะบันทึก
  * @param {Folder} folder - โฟลเดอร์ใน Drive ที่จะบันทึกไฟล์
- * @returns {string} - File ID ของรูปภาพที่บันทึก หรือ '' หากล้มเหลว
+ * @param {string} [forcedMimeType] - Mime type ของไฟล์ (ถ้ามี)
+ * @returns {object} - อ็อบเจ็กต์ที่ประกอบด้วย ID, ขนาด และ URL ของไฟล์ หรืออ็อบเจ็กต์ว่างหากล้มเหลว
  */
-function saveImageAndGetId(base64, filename, folder) {
-    if (!base64 || !base64.startsWith('data:image')) return '';
+function saveFileAndGetId(base64, filename, folder, forcedMimeType) {
+    if (!base64 || !base64.includes(',')) return {};
     try {
-        const contentTypeMatch = base64.match(/data:(image\/.+);base64,/);
-        if (!contentTypeMatch) {
-            Logger.log(`Could not find content type for image: ${filename}`);
-            return '';
-        }
-        const contentType = contentTypeMatch[1];
-        const bytes = Utilities.base64Decode(base64.split(',')[1]);
-        const blob = Utilities.newBlob(bytes, contentType, filename);
+        const parts = base64.split(',');
+        const mimeType = forcedMimeType || parts[0].match(/:(.*?);/)[1];
+        const bytes = Utilities.base64Decode(parts[1]);
+        const blob = Utilities.newBlob(bytes, mimeType, filename);
         const file = folder.createFile(blob);
         file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        return file.getId();
+        return {
+            id: file.getId(),
+            size: file.getSize(),
+            url: file.getUrl()
+        };
     } catch (e) {
-        Logger.log(`Error saving image ${filename}: ${e.stack}`);
-        return '';
+        Logger.log(`Error saving file ${filename}: ${e.stack}`);
+        return {};
     }
 }
 
@@ -770,5 +842,5 @@ function generateDocNumber(sheet, timestamp, prefixCode) {
  */
 function getOrCreateFolder(parentFolder, folderName) {
     const folders = parentFolder.getFoldersByName(folderName);
-    return folders.hasNext() ? folders.next() : parentFolder.createFolder(folderName)
+    return folders.hasNext() ? folders.next() : parentFolder.createFolder(folderName);
 }
